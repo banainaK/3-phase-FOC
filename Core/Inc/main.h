@@ -34,7 +34,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#define adc_data_size 2
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
