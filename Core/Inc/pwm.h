@@ -6,7 +6,8 @@ extern "C" {
 #endif
 
 struct Reference {
-    double angle; 
+    double angle;
+    double magnitude; 
 };
 
 // initialize all your state vectors with CCR value
@@ -19,8 +20,8 @@ struct StateVectors {
     int V_101[3];
 };
 
-void initialize_reference(struct Reference* vec, double angle);
-void initialize_array(struct StateVectors* obj, int CCR);
+void initialize_reference(struct Reference* vec, double angle, double magnitude);
+void initialize_array(struct StateVectors* svpwm_obj, int CCR);
 double convert_rpm_to_angle(double rpm, double period);
 struct Vec3 update_CCR(struct StateVectors* obj, struct Reference* vector);
 struct Vec3 update_CCR_new(double duty_cycle, double pwm_period, struct Reference* vector);

@@ -1,10 +1,12 @@
 #include "pwm.h"
 #include "utilities.h"
 #include <math.h>
+#include <stdio.h>
 
 
-void initialize_reference(struct Reference* vec, double angle) {
+void initialize_reference(struct Reference* vec, double angle, double magnitude) {
     vec->angle = angle;
+    vec->magnitude = magnitude;
 }
 
 double convert_rpm_to_angle(double rpm, double period) {
@@ -33,6 +35,7 @@ void initialize_array(struct StateVectors* obj, int CCR) {
 
 struct Vec3 update_CCR_new(double duty_cycle, double pwm_period, struct Reference* vector) {
     double angle = vector -> angle;
+    // double magnitude = vector -> magnitude;
     double theta;
     struct Vec3 output;
 
@@ -84,8 +87,9 @@ struct Vec3 update_CCR_new(double duty_cycle, double pwm_period, struct Referenc
 
 }
 
-struct Vec3 update_CCR(struct StateVectors* obj, struct Reference* vector) {
+struct Vec3 update_CCR(struct StateVectors* svpwm_obj, struct Reference* vector) {
     double angle = vector->angle;
+    // double magnitude = vector->magnitude;
     double percent;
 
     // 120, 160, 180
@@ -99,41 +103,45 @@ struct Vec3 update_CCR(struct StateVectors* obj, struct Reference* vector) {
         // linear combination of vectors
         percent = angle / 60;
 
-        new_vector_a = scalar_multiply_vector(obj->V_100, 1 - percent);
-        new_vector_b = scalar_multiply_vector(obj->V_110, percent);
+        new_vector_a = scalar_multiply_vector(svpwm_obj->V_100, 1 - percent);
+        new_vector_b = scalar_multiply_vector(svpwm_obj->V_110, percent);
         
     } else if (angle >= 60 && angle <= 120) {
         percent = (angle - 60) / 60;
 
-        new_vector_a = scalar_multiply_vector(obj->V_110, 1 - percent);
-        new_vector_b = scalar_multiply_vector(obj->V_010, percent);
+        new_vector_a = scalar_multiply_vector(svpwm_obj->V_110, 1 - percent);
+        new_vector_b = scalar_multiply_vector(svpwm_obj->V_010, percent);
         
     } else if (angle >= 120 && angle <= 180) {
         percent = (angle - 120) / 60;
 
-        new_vector_a = scalar_multiply_vector(obj->V_010, 1 - percent);
-        new_vector_b = scalar_multiply_vector(obj->V_011, percent);
+        new_vector_a = scalar_multiply_vector(svpwm_obj->V_010, 1 - percent);
+        new_vector_b = scalar_multiply_vector(svpwm_obj->V_011, percent);
 
     } else if (angle >= 180 && angle <= 240) {
         percent = (angle - 180) / 60;
         
-        new_vector_a = scalar_multiply_vector(obj->V_011, 1 - percent);
-        new_vector_b = scalar_multiply_vector(obj->V_001, percent);
+        new_vector_a = scalar_multiply_vector(svpwm_obj->V_011, 1 - percent);
+        new_vector_b = scalar_multiply_vector(svpwm_obj->V_001, percent);
     } else if (angle >= 240 && angle <= 300) {
         percent = (angle - 240) / 60;
 
-        new_vector_a = scalar_multiply_vector(obj->V_001, 1 - percent);
-        new_vector_b = scalar_multiply_vector(obj->V_101, percent);
+        new_vector_a = scalar_multiply_vector(svpwm_obj->V_001, 1 - percent);
+        new_vector_b = scalar_multiply_vector(svpwm_obj->V_101, percent);
 
     } else {
         percent = (angle - 300) / 60; 
         
-        new_vector_a = scalar_multiply_vector(obj->V_101, 1 - percent);
-        new_vector_b = scalar_multiply_vector(obj->V_100, percent);  
+        new_vector_a = scalar_multiply_vector(svpwm_obj->V_101, 1 - percent);
+        new_vector_b = scalar_multiply_vector(svpwm_obj->V_100, percent);  
     }
 
     // add components of vector
     struct Vec3 output = add_vectors(new_vector_a, new_vector_b);
+    // struct Vec3 scaled_output = scalar_multiply_struct(output, magnitude);
     // [TIM1 CCR, TIM8 CCR, TIM8 CCR]
+    if (output.arr[0] == 0 && output.arr[1] == 0 && output.arr[2] == 0) {
+        printf("output is zero vector!");
+    }
     return output;
 }

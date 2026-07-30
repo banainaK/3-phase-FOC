@@ -25,9 +25,11 @@ struct Vec3 matrix_3x3_vector_product(struct Matrix3x3 transform, struct Vec3 in
 
 struct Matrix3x3 scalar_multiply_matrix(struct Matrix3x3 input, double scalar);
 struct Vec3 scalar_multiply_vector(int input[], double scalar);
+struct Vec3 scalar_multiply_struct(struct Vec3 input, double scalar);
 struct Vec3 add_vectors(struct Vec3 input_1, struct Vec3 input_2);
-struct Vec3 clarke_transform(double current_1, double current_2, double current_3);
-struct Vec2 park_transform(double current_1, double current_2, double phase_angle);
+struct Vec3 clarke_transform(struct Vec3 input);
+struct Vec2 park_transform(struct Vec2 input, float electrical_angle);
+struct Vec2 inverse_park_transform(struct Vec2 input, float electrical_angle);
 
 void print_array(struct Vec2 currents);
 
