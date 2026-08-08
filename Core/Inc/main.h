@@ -34,7 +34,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#define adc_data_size 8
+#define adc_data_size 3
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -64,6 +64,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define DIAG_EN_Pin GPIO_PIN_6
 #define DIAG_EN_GPIO_Port GPIOA
+#define DEBUG_TIM_Pin GPIO_PIN_6
+#define DEBUG_TIM_GPIO_Port GPIOC
 #define IN2_Pin GPIO_PIN_7
 #define IN2_GPIO_Port GPIOC
 #define IN3_Pin GPIO_PIN_8

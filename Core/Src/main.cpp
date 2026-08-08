@@ -25,18 +25,23 @@
 #include "stm32h5xx_hal_adc.h"
 #include "stm32h5xx_hal_adc_ex.h"
 #include "stm32h5xx_hal_def.h"
+#include "stm32h5xx_hal_dma.h"
 #include "stm32h5xx_hal_gpio.h"
 #include "stm32h5xx_hal_tim.h"
 #include "stm32h5xx_hal_uart.h"
 #include "stm32h5xx_nucleo.h"
+#include "tle5012b_util.hpp"
 #include "utilities.h"
 #include "pwm.h"
-#include "pi_controller.h"
+#include "pi_controller.hpp"
+#include "simple_pi_controller.hpp"
 #include "TLE5012b.hpp"
 #include <cmath>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include "tests.hpp"
+#include "moving_average_filter.hpp"
 
 /* USER CODE END Includes */
 
@@ -67,58 +72,60 @@ SPI_HandleTypeDef hspi2;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim8;
-TIM_HandleTypeDef htim15;
 
 /* USER CODE BEGIN PV */
-double r_shunt;
-double v_ref;
-double timer_frequency;
-double rpm;
-double prescaler;
+float r_shunt;
+float v_ref;
+float timer_frequency;
+float rpm;
+float v_offset;
+float gain;
 
-double pwm_frequency;
-double pwm_period;
-double degree_per_interrupt;
-double duty_cycle;
-double voltage;
-double current;
+float pwm_frequency;
+float pwm_period;
+float degree_per_interrupt;
+float duty_cycle;
+float voltage;
+float current;
 
 bool timer_done;
 
 uint16_t adc_value[adc_data_size] = {};
 uint32_t start = HAL_GetTick();
 
-
 struct Vec3 output;
-struct Vec2 id_iq;
+struct Vec2 clarke;
 
 // debugging
-double current_a;
-double current_b;
-double current_c;
-
-// const int CCR = 1000;
-// int states[6][3] = {
-//   {CCR, 0, 0}, 
-//   {CCR, CCR, 0},
-//   {0, CCR, 0},
-//   {0, CCR, CCR}, 
-//   {0, 0, CCR}, 
-//   {CCR, 0, CCR},
-// };
+float current_a;
+float current_b;
+float current_c;
 
 struct StateVectors svpwm_obj;
 struct Reference vec;
 
-PIController controller = PIController(0.1, 0.0, 0.1, 0.0);
+PIController controller_id = PIController(0.1 , 0.00001, 0.0);
+PIController controller_iq = PIController(0.1, 0.00001, 3.0);
+
+MovingAverageFilter ia_filter = MovingAverageFilter();
+MovingAverageFilter ib_filter = MovingAverageFilter();
+MovingAverageFilter ic_filter = MovingAverageFilter();
+
+
 Tle5012b encoderDriver;
-float angle_value;
+float mechanical_angle;
 float num_pole_pairs;
-uint16_t status;
 errorTypes error;
 
-float set_kp; 
-float set_ki;
+float electrical_angle;
+float angle_offset;
+struct Vec2 controller_outputs;
+struct Vec2 id_iq;
+
+
+float va_vb_magnitude;
+
+
 
 /* USER CODE END PV */
 
@@ -132,14 +139,15 @@ static void MX_TIM8_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_TIM15_Init(void);
 /* USER CODE BEGIN PFP */
-uint16_t Get_ADC_Value();
-double convert_adc_to_voltage(uint16_t adc_value);
-double convert_voltage_to_current(double out_voltage);
-double current_over_time(uint16_t adc_values[adc_data_size], double delta_t);
+
+float convert_adc_to_voltage(uint16_t adc_value);
+float convert_voltage_to_current(float out_voltage);
 uint16_t get_average_adc_value(int channel);
 struct Vec2 get_id_iq(float electrical_angle);
+float run_angle_calibration();
+float get_electrical_angle(float angle_offset);
+void update_average_id_iq(float id, float iq);
 
 /* USER CODE END PFP */
 
@@ -158,13 +166,14 @@ int main(void)
   /* USER CODE BEGIN 1 */
   r_shunt = 0.33;
   v_ref = 3.3;
-  // v_offset = 0.5 * v_ref;
-  // gain = 1.53;
+  v_offset = 0.5 * v_ref;
+  gain = 1.53;
   timer_frequency = 250000000;
   rpm = 30;
   num_pole_pairs = 7.0;
 
-  initialize_array(&svpwm_obj, 5000);
+
+  initialize_array(&svpwm_obj, 5000.0f);
   initialize_reference(&vec, 0.0, 0.0);
 
   /* USER CODE END 1 */
@@ -196,7 +205,6 @@ int main(void)
   MX_TIM1_Init();
   MX_SPI2_Init();
   MX_ADC1_Init();
-  MX_TIM15_Init();
   /* USER CODE BEGIN 2 */
 
   // initialize encoderDriver
@@ -204,27 +212,30 @@ int main(void)
   encoderDriver.resetFirmware();
   encoderDriver.readBlockCRC();
 
+
   pwm_frequency = timer_frequency / 10000;
   pwm_period = 1 / pwm_frequency;
   degree_per_interrupt = convert_rpm_to_angle(rpm, pwm_period);
   duty_cycle = 0.5;
   // degree_per_interrupt = 1.0;
 
+  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_value, adc_data_size) != HAL_OK) {
+    Error_Handler();
+  }
+
   //IN1
+  HAL_TIM_Base_Start(&htim1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_Base_Start_IT(&htim1);
+  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_3);
 
   // IN2
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
   // IN3
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
 
-  // TIM15
-  HAL_TIM_Base_Start_IT(&htim15);
-  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_value, adc_data_size) != HAL_OK) {
-    Error_Handler();
-  }
+  
 
+  // angle_offset = run_angle_calibration();
   
   /* USER CODE END 2 */
 
@@ -249,41 +260,26 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // error = encoderDriver.getAngleValue(angle_value);
-
-    // if (HAL_GetTick() - start >= 5000) {
-    //   set_kp += 0.01;
-    //   controller.update_kp(set_kp);
-    //   start = HAL_GetTick();
-    // }
     if (timer_done) {
-      if (angle_value >= 360.0) {
-        angle_value -= 360.0;
+      // HAL_GPIO_TogglePin(DEBUG_ANGLE_GPIO_Port, DEBUG_ANGLE_Pin);
+
+      if (vec.angle >= 360.0f){
+        vec.angle -= 360.0f;
       }
-
-      id_iq = get_id_iq(angle_value * num_pole_pairs);
-      controller.update(id_iq.arr[0], id_iq.arr[1], pwm_period); // vd, vq
-
-      struct Vec2 va_vb = inverse_park_transform(controller.outputs, angle_value * num_pole_pairs);
-      vec.angle = atan2(va_vb.arr[1], va_vb.arr[0]) * (180 / M_PIF);
-      vec.magnitude = sqrt(va_vb.arr[0] * va_vb.arr[0] + va_vb.arr[1] * va_vb.arr[1]);
-
-      if (vec.angle < 0) {
-        vec.angle += 360;
-      }
-
       output = update_CCR(&svpwm_obj, &vec);
       TIM1 -> CCR1 = (int)output.arr[0];
       TIM8 -> CCR2 = (int)output.arr[1];
       TIM8 -> CCR3 = (int)output.arr[2];
 
+      vec.angle += 0.1;
+
       timer_done = false;
-      angle_value += 0.1;
     }
     
     /* USER CODE END WHILE */
-  }
+
     /* USER CODE BEGIN 3 */
+  }
   /* USER CODE END 3 */
 }
 
@@ -372,11 +368,11 @@ static void MX_ADC1_Init(void)
   hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
-  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.NbrOfConversion = 3;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.NbrOfDiscConversion = 1;
-  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T15_TRGO;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T1_CC3;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_FALLING;
   hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.SamplingMode = ADC_SAMPLING_MODE_NORMAL;
   hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
@@ -388,7 +384,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_9;
+  sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
@@ -401,8 +397,17 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_7;
+  sConfig.Channel = ADC_CHANNEL_11;
   sConfig.Rank = ADC_REGULAR_RANK_2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_10;
+  sConfig.Rank = ADC_REGULAR_RANK_3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -533,6 +538,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
@@ -542,12 +548,25 @@ static void MX_TIM1_Init(void)
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 9999;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+  htim1.Init.Period = 5000;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -559,13 +578,19 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 5000;
+  sConfigOC.Pulse = 2500;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 5000;
+  if (HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -614,7 +639,7 @@ static void MX_TIM8_Init(void)
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
   htim8.Init.Prescaler = 0;
-  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
   htim8.Init.Period = 9999;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
@@ -623,7 +648,7 @@ static void MX_TIM8_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC4REF;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
@@ -670,52 +695,6 @@ static void MX_TIM8_Init(void)
 }
 
 /**
-  * @brief TIM15 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM15_Init(void)
-{
-
-  /* USER CODE BEGIN TIM15_Init 0 */
-
-  /* USER CODE END TIM15_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM15_Init 1 */
-
-  /* USER CODE END TIM15_Init 1 */
-  htim15.Instance = TIM15;
-  htim15.Init.Prescaler = 0;
-  htim15.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim15.Init.Period = 2500;
-  htim15.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim15.Init.RepetitionCounter = 0;
-  htim15.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim15) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim15, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim15, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM15_Init 2 */
-
-  /* USER CODE END TIM15_Init 2 */
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -737,7 +716,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, DIAG_EN_Pin|DEBUG_ANGLE_Pin|DEBUG_DMA_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9|EN1_Pin|EN2_Pin|EN3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, DEBUG_TIM_Pin|GPIO_PIN_9|EN1_Pin|EN2_Pin
+                          |EN3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : DIAG_EN_Pin DEBUG_ANGLE_Pin DEBUG_DMA_Pin */
   GPIO_InitStruct.Pin = DIAG_EN_Pin|DEBUG_ANGLE_Pin|DEBUG_DMA_Pin;
@@ -746,8 +726,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC9 EN1_Pin EN2_Pin EN3_Pin */
-  GPIO_InitStruct.Pin = GPIO_PIN_9|EN1_Pin|EN2_Pin|EN3_Pin;
+  /*Configure GPIO pins : DEBUG_TIM_Pin PC9 EN1_Pin EN2_Pin
+                           EN3_Pin */
+  GPIO_InitStruct.Pin = DEBUG_TIM_Pin|GPIO_PIN_9|EN1_Pin|EN2_Pin
+                          |EN3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -767,53 +749,57 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-double convert_adc_to_voltage(uint16_t adc_value) {
+float convert_adc_to_voltage(uint16_t adc_value) {
   return (adc_value * v_ref) / 4095;
 }
-double convert_voltage_to_current(double out_voltage) {
+float convert_voltage_to_current(float out_voltage) {
   return out_voltage / r_shunt;
 }
 
 struct Vec2 get_id_iq(float electrical_angle) {
-  double v_a = convert_adc_to_voltage(get_average_adc_value(0) >> 3);
-  double v_b = convert_adc_to_voltage(get_average_adc_value(1) >> 3);
+  float v_a = convert_adc_to_voltage(adc_value[0]);
+  float v_b = convert_adc_to_voltage(adc_value[1]);
+  float v_c = convert_adc_to_voltage(adc_value[2]);
 
-  double i_a = convert_voltage_to_current(v_a);
-  double i_b = convert_voltage_to_current(v_b);
-
-  struct Vec3 phase_currents;
-  phase_currents.arr[0] = i_a;
-  phase_currents.arr[1] = i_b;
-  phase_currents.arr[2] = -i_a - i_b;
+  float i_a = convert_voltage_to_current(v_a);
+  float i_b = convert_voltage_to_current(v_b);
+  float i_c = convert_voltage_to_current(v_c);
 
   current_a = i_a;
   current_b = i_b;
-  current_c = -i_a - i_b;
+  current_c = i_c;
+
+  ia_filter.process(current_a);
+  ib_filter.process(current_b);
+  ic_filter.process(current_c);
+
+  struct Vec3 filtered_currents;
+  filtered_currents.arr[0] = ia_filter.average;
+  filtered_currents.arr[1] = ib_filter.average;
+  filtered_currents.arr[2] = ic_filter.average;
 
   // Clarke transform
-  struct Vec3 clarke = clarke_transform(phase_currents);
-  struct Vec2 transformed; 
-
-  transformed.arr[0] = clarke.arr[0];
-  transformed.arr[1] = clarke.arr[1];
+  clarke = clarke_transform(filtered_currents);
 
   // Park transform
-  struct Vec2 park = park_transform(transformed, electrical_angle);
+  struct Vec2 park = park_transform(clarke, electrical_angle);
 
   return park;
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
   // debugging purposes
-}
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-  if (htim == &htim1) {
+  if (hadc == &hadc1) {
     timer_done = true;
   }
+
+}
+void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
+  timer_done = true;
 }
 uint16_t get_average_adc_value(int channel) {
-  int adc_sum = 0;
-  if (channel == 0) {
+  float adc_sum = 0;
+  if (channel == 1) {
     for (int i = 0; i < adc_data_size; i+=2) {
       adc_sum += adc_value[i];
     }
@@ -822,21 +808,49 @@ uint16_t get_average_adc_value(int channel) {
       adc_sum += adc_value[i];
     }
   }
-  return adc_sum;
+  return adc_sum / 8;
 }
-double current_over_time(uint16_t adc_values[adc_data_size], double delta_t) {
-  double sum = 0;
-  for (int i = 0; i < adc_data_size; ++i) {
-    voltage = convert_adc_to_voltage(adc_values[i]);
-    current = convert_voltage_to_current(voltage);
-    if (i == 0 || i == adc_data_size - 1) {
-      sum += current;
-    } else {
-      sum += 2 * current;
-    }
+
+float run_angle_calibration() {
+  // open loop control 
+  float offset = 0.0;
+
+  TIM1 -> CCR1 = 5000;
+  TIM8 -> CCR2 = 0;
+  TIM8 -> CCR3 = 0;
+  HAL_Delay(500); // Wait for the motor to settle into a slot
+  int num_samples = 100;
+  for (int i = 0; i < num_samples; i++) {
+    error = encoderDriver.getAngleValue(mechanical_angle);
+    offset += mechanical_angle;
   }
-  return (sum * delta_t) / 2;
+
+  offset = offset / num_samples;
+  return offset;
 }
+
+float get_electrical_angle(float angle_offset) {
+  float e_angle;
+  error = encoderDriver.getAngleValue(mechanical_angle);
+
+  if (mechanical_angle < 0) {
+    e_angle = mechanical_angle + 360;
+  } else {
+    e_angle = mechanical_angle;
+  }
+
+  if (error != NO_ERROR) {
+    return -1.0;
+  }
+  e_angle = fmodf((e_angle - angle_offset) * num_pole_pairs, 360.0f);
+  
+  if (e_angle < 0) {
+    e_angle += 360.0f;
+  }
+  
+  return e_angle;
+}
+
 
 
 /* USER CODE END 4 */

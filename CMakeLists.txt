@@ -31,6 +31,16 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
+# Include(FetchContent)
+
+# FetchContent_Declare(
+#   Catch2
+#   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+#   GIT_TAG        v3.8.1 # or a later release
+# )
+
+# FetchContent_MakeAvailable(Catch2)
+
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
     Core/Src/pwm.cpp
@@ -39,6 +49,9 @@ add_executable(${CMAKE_PROJECT_NAME}
     Core/Src/TLE5012b.cpp
     Core/Src/tle5012b_reg.cpp
     Core/Src/spic.cpp
+    Core/src/simple_pi_controller.cpp
+    Core/src/tests.cpp
+    Core/src/moving_average_filter.cpp
 )
 
 # Add STM32CubeMX generated sources
@@ -72,4 +85,5 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+    # tests Catch2::Catch2WithMain)
 )

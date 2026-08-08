@@ -4,20 +4,20 @@
 #include <stdio.h>
 
 
-void initialize_reference(struct Reference* vec, double angle, double magnitude) {
+void initialize_reference(struct Reference* vec, float angle, float magnitude) {
     vec->angle = angle;
     vec->magnitude = magnitude;
 }
 
-double convert_rpm_to_angle(double rpm, double period) {
-    double rev_s = rpm / 60;
-    double rad_s = 2 * M_PIF * rev_s;
-    double rad = rad_s * period;
-    double deg = rad * (180 / M_PIF);
+float convert_rpm_to_angle(float rpm, float period) {
+    float rev_s = rpm / 60;
+    float rad_s = 2 * M_PIF * rev_s;
+    float rad = rad_s * period;
+    float deg = rad * (180 / M_PIF);
     return deg;
 }
 
-void initialize_array(struct StateVectors* obj, int CCR) {
+void initialize_array(struct StateVectors* obj, float CCR) {
     obj->V_100[0] = CCR;
     
     obj->V_110[0] = CCR;
@@ -29,14 +29,14 @@ void initialize_array(struct StateVectors* obj, int CCR) {
     obj->V_011[2] = CCR;
 
     obj->V_001[2] = CCR;
+
     obj->V_101[0] = CCR;
     obj->V_101[2] = CCR;
 }
 
-struct Vec3 update_CCR_new(double duty_cycle, double pwm_period, struct Reference* vector) {
-    double angle = vector -> angle;
-    // double magnitude = vector -> magnitude;
-    double theta;
+struct Vec3 update_CCR_new(float duty_cycle, float pwm_period, struct Reference* vector) {
+    float angle = vector -> angle;
+    float theta;
     struct Vec3 output;
 
     if (angle >= 0 && angle <= 60) {
@@ -53,9 +53,9 @@ struct Vec3 update_CCR_new(double duty_cycle, double pwm_period, struct Referenc
         theta = angle - 300;
     }
 
-    double t_1 = pwm_period * duty_cycle * sin((60 - theta) * (M_PIF / 180));
-    double t_2 = pwm_period * duty_cycle * sin(theta * (M_PIF / 180));
-    double t_0 = pwm_period - t_1 - t_2;
+    float t_1 = pwm_period * duty_cycle * sin((60 - theta) * (M_PIF / 180));
+    float t_2 = pwm_period * duty_cycle * sin(theta * (M_PIF / 180));
+    float t_0 = pwm_period - t_1 - t_2;
 
 
     if (angle >= 0 && angle <= 60) {
@@ -88,9 +88,8 @@ struct Vec3 update_CCR_new(double duty_cycle, double pwm_period, struct Referenc
 }
 
 struct Vec3 update_CCR(struct StateVectors* svpwm_obj, struct Reference* vector) {
-    double angle = vector->angle;
-    // double magnitude = vector->magnitude;
-    double percent;
+    float angle = vector->angle;
+    float percent;
 
     // 120, 160, 180
     // 0, 40, 60 --> 66.6% 
@@ -140,8 +139,5 @@ struct Vec3 update_CCR(struct StateVectors* svpwm_obj, struct Reference* vector)
     struct Vec3 output = add_vectors(new_vector_a, new_vector_b);
     // struct Vec3 scaled_output = scalar_multiply_struct(output, magnitude);
     // [TIM1 CCR, TIM8 CCR, TIM8 CCR]
-    if (output.arr[0] == 0 && output.arr[1] == 0 && output.arr[2] == 0) {
-        printf("output is zero vector!");
-    }
     return output;
 }
