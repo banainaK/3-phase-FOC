@@ -87,7 +87,7 @@ struct Vec3 update_CCR_new(float duty_cycle, float pwm_period, struct Reference*
 
 }
 
-struct Vec3 update_CCR(struct StateVectors* svpwm_obj, struct Reference* vector) {
+struct Vec3 get_CCR(struct StateVectors* svpwm_obj, struct Reference* vector) {
     float angle = vector->angle;
     float percent;
 
