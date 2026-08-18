@@ -1,4 +1,4 @@
-#include "pwm.h"
+#include "svpwm.h"
 #include "utilities.h"
 #include <math.h>
 #include <stdio.h>
@@ -53,8 +53,8 @@ struct Vec3 update_CCR_new(float duty_cycle, float pwm_period, struct Reference*
         theta = angle - 300;
     }
 
-    float t_1 = pwm_period * duty_cycle * sin((60 - theta) * (M_PIF / 180));
-    float t_2 = pwm_period * duty_cycle * sin(theta * (M_PIF / 180));
+    float t_1 = pwm_period * duty_cycle * sinf((60 - theta) * (M_PIF / 180));
+    float t_2 = pwm_period * duty_cycle * sinf(theta * (M_PIF / 180));
     float t_0 = pwm_period - t_1 - t_2;
 
 

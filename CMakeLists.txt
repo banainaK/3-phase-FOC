@@ -43,15 +43,15 @@ enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
-    Core/Src/pwm.cpp
+    Core/Src/svpwm.cpp
     Core/Src/utilities.cpp
     Core/Src/pi_controller.cpp
     Core/Src/TLE5012b.cpp
     Core/Src/tle5012b_reg.cpp
     Core/Src/spic.cpp
-    Core/src/simple_pi_controller.cpp
-    Core/src/tests.cpp
-    Core/src/moving_average_filter.cpp
+    Core/Src/foc.cpp
+    Core/Src/tests.cpp
+    Core/Src/moving_average_filter.cpp
 )
 
 # Add STM32CubeMX generated sources
